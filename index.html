@@ -199,8 +199,6 @@ else           runHost();
 function runHost() {
   const roomCode = Math.random().toString(36).substr(2,6).toUpperCase();
   const joinUrl  = `${location.origin}${location.pathname}?room=${roomCode}`;
-  let qrDone = false;
-
   let phaseIdx = 0, phase = 'lobby', step = 0;
 
   // Local state — no race conditions, host is single source of truth
@@ -421,18 +419,21 @@ function runHost() {
         <div id="host-main">${mainHtml}</div>
         <div id="host-side">
           ${sideHtml}
-          <button class="next-btn" onclick="hostNext()">NEXT ▶</button>
+          <button class="next-btn" onclick="hostNext()" style="${phase==='lobby'?'border-color:#4caf50;color:#4caf50;font-size:1rem;letter-spacing:6px':''}">
+            ${phase === 'lobby' ? '▶ START GAME' : 'NEXT ▶'}
+          </button>
         </div>
       </div>`;
 
-    if (phase === 'lobby' && !qrDone) {
-      const el = document.getElementById('host-qr');
-      if (el && typeof QRCode !== 'undefined') {
-        new QRCode(el, {text:joinUrl, width:380, height:380, colorDark:'#000000', colorLight:'#ffffff'});
-        qrDone = true;
-      }
+    if (phase === 'lobby') {
+      // Always regenerate QR after DOM update (innerHTML wipes the canvas each render)
+      setTimeout(() => {
+        const el = document.getElementById('host-qr');
+        if (el && !el.firstChild && typeof QRCode !== 'undefined') {
+          new QRCode(el, {text:joinUrl, width:380, height:380, colorDark:'#000000', colorLight:'#ffffff'});
+        }
+      }, 10);
     }
-    if (phase !== 'lobby') qrDone = false;
   }
 
   function hBar(label, pct, fillClass, blue=false) {
