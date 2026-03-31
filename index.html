@@ -23,7 +23,6 @@ h2{font-family:var(--title);font-size:1.5rem;letter-spacing:.08em;color:#fff;tex
 .card{background:rgba(16,10,6,.97);border:1px solid rgba(139,0,0,.25);border-top:3px solid var(--red-bright);padding:28px 24px;width:100%;max-width:480px}
 .btn{width:100%;background:none;border:1px solid var(--red-bright);color:var(--red-bright);font-family:var(--mono);font-size:.82rem;letter-spacing:4px;padding:14px;cursor:pointer;transition:.25s;text-transform:uppercase}
 .btn:hover{background:rgba(139,0,0,.3);box-shadow:0 0 20px var(--red-glow)}
-.btn:disabled{opacity:.3;cursor:not-allowed}
 .btn-green{border-color:#2a8a2a;color:#4caf50}.btn-green:hover{background:rgba(0,80,0,.3)}
 .btn-red-dark{border-color:#8a1a1a;color:#ff5555}.btn-red-dark:hover{background:rgba(100,0,0,.3)}
 input[type=text]{width:100%;background:rgba(25,15,10,.95);border:1px solid rgba(139,0,0,.4);color:var(--text);font-family:var(--mono);font-size:1rem;padding:14px;outline:none;margin:12px 0;letter-spacing:2px}
@@ -32,14 +31,13 @@ input:focus{border-color:var(--red-bright);box-shadow:0 0 10px rgba(200,0,0,.2)}
 .ans-btn{width:100%;background:rgba(18,12,8,.97);border:1px solid rgba(139,0,0,.3);color:var(--text);font-family:var(--mono);font-size:.95rem;padding:13px 16px;cursor:pointer;transition:.2s;text-align:left;margin:5px 0;display:flex;gap:12px;align-items:flex-start}
 .ans-btn:hover{background:rgba(70,15,5,.7);border-color:var(--red-bright)}
 .ans-btn.correct{background:rgba(0,70,0,.45);border-color:#4caf50;color:#4caf50}
-.ans-btn.wrong{background:rgba(90,0,0,.4);border-color:#cc0000;color:#ff6666}
 .ans-btn.selected-wrong{background:rgba(100,0,0,.5);border-color:#ff4444;color:#ff8888}
 .ans-key{color:var(--red-bright);min-width:18px;font-weight:bold}
 .ans-btn.correct .ans-key{color:#4caf50}
 .vote-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:18px}
 .bar-row{margin:10px 0}
 .bar-lbl{font-size:.65rem;letter-spacing:3px;margin-bottom:5px;display:flex;justify-content:space-between}
-.bar-track{height:26px;background:rgba(25,15,8,.9);border-radius:2px;overflow:hidden;position:relative}
+.bar-track{height:26px;background:rgba(25,15,8,.9);border-radius:2px;overflow:hidden}
 .bar-fill{height:100%;border-radius:2px;transition:width .7s ease;display:flex;align-items:center;padding-left:8px;font-size:.65rem;letter-spacing:2px;white-space:nowrap}
 .fill-yes{background:linear-gradient(90deg,#1a5a1a,#2a8a2a);color:#aaffaa}
 .fill-no{background:linear-gradient(90deg,#5a1a1a,#8a2a2a);color:#ffaaaa}
@@ -77,9 +75,6 @@ input:focus{border-color:var(--red-bright);box-shadow:0 0 10px rgba(200,0,0,.2)}
 .hbar-lbl{font-size:.68rem;letter-spacing:3px;margin-bottom:5px;display:flex;justify-content:space-between;color:var(--paper)}
 .q-text{font-size:1.1rem;color:#e8dfc8;line-height:1.7;margin:14px 0}
 .topic-badge{display:inline-block;font-size:.65rem;letter-spacing:4px;color:var(--red-bright);border:1px solid rgba(139,0,0,.3);padding:3px 10px;margin-bottom:10px}
-/* Setup screen */
-.setup-step{display:flex;align-items:flex-start;gap:12px;margin:10px 0;font-size:.82rem;color:var(--dim);line-height:1.7}
-.setup-num{color:var(--red-bright);font-family:var(--title);font-size:1.1rem;min-width:22px}
 @media(max-width:700px){
   #host-wrap{grid-template-columns:1fr}
   #host-side{display:none}
@@ -92,29 +87,55 @@ input:focus{border-color:var(--red-bright);box-shadow:0 0 10px rgba(200,0,0,.2)}
 <div id="app" style="width:100%"></div>
 
 <script>
-// ── FIREBASE REST HELPERS ─────────────────────────────────────────────────────
-let DB = '';
+// ── NTFY.SH RELAY (zero-setup, works on all networks) ─────────────────────────
+const NTFY = 'https://ntfy.sh';
 
-async function fbGet(path) {
-  try {
-    const r = await fetch(`${DB}/${path}.json`);
-    if (!r.ok) return null;
-    return await r.json();
-  } catch { return null; }
-}
+function hostTopic(rc)   { return `archives-quiz-${rc}-h`; }
+function playerTopic(rc) { return `archives-quiz-${rc}-p`; }
 
-async function fbSet(path, data) {
+async function ntfyPublish(topic, data) {
   try {
-    await fetch(`${DB}/${path}.json`, {
-      method: 'PUT',
+    await fetch(`${NTFY}/${topic}`, {
+      method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(data)
     });
-  } catch(e) { console.error('fbSet:', e); }
+  } catch(e) { console.warn('ntfy publish error', e); }
 }
 
-async function fbDel(path) {
-  try { await fetch(`${DB}/${path}.json`, {method:'DELETE'}); } catch {}
+function ntfySubscribe(topic, onData) {
+  const src = new EventSource(`${NTFY}/${topic}/sse`);
+  src.addEventListener('message', e => {
+    try {
+      const env = JSON.parse(e.data);
+      if (env.event === 'keepalive') return;
+      onData(JSON.parse(env.message));
+    } catch {}
+  });
+  src.addEventListener('open', async () => {
+    // On reconnect, fetch latest state so nothing is missed
+    const latest = await ntfyPollLatest(topic);
+    if (latest) onData(latest);
+  });
+  return src;
+}
+
+async function ntfyPollLatest(topic) {
+  try {
+    const since = Math.floor(Date.now() / 1000) - 3600; // last hour
+    const r = await fetch(`${NTFY}/${topic}/json?poll=1&since=${since}`);
+    if (!r.ok) return null;
+    const text = await r.text();
+    const lines = text.trim().split('\n').filter(Boolean);
+    for (let i = lines.length - 1; i >= 0; i--) {
+      try {
+        const env = JSON.parse(lines[i]);
+        const data = JSON.parse(env.message);
+        if (data.type === 'state') return data;
+      } catch {}
+    }
+    return null;
+  } catch { return null; }
 }
 
 // ── GAME DATA ─────────────────────────────────────────────────────────────────
@@ -168,204 +189,138 @@ const PHASES = [
 ];
 
 // ── ROUTING ───────────────────────────────────────────────────────────────────
-const params    = new URLSearchParams(location.search);
-const roomParam = params.get('room');
-const dbParam   = params.get('db');
-
-if (dbParam) {
-  DB = decodeURIComponent(dbParam);
-  localStorage.setItem('quiz_db', DB);
-} else {
-  DB = localStorage.getItem('quiz_db') || '';
-}
-
-if (roomParam) {
-  runPlayer(roomParam.toUpperCase());
-} else if (!DB) {
-  runSetup();
-} else {
-  runHost();
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-//  SETUP WIZARD
-// ══════════════════════════════════════════════════════════════════════════════
-function runSetup() {
-  document.getElementById('app').innerHTML = `
-    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:24px">
-      <div class="card" style="max-width:520px">
-        <div class="tag">▣ ONE-TIME SETUP · 2 MINUTES</div>
-        <h1 style="font-size:1.4rem;margin-bottom:6px">DATABASE SETUP</h1>
-        <div style="font-size:.65rem;color:var(--dim);letter-spacing:3px;text-align:center;margin-bottom:18px">NEEDED ONCE — SAVES AUTOMATICALLY</div>
-        <div class="divider"></div>
-
-        <div class="setup-step"><span class="setup-num">1</span><span>Go to <a href="https://console.firebase.google.com" target="_blank" style="color:var(--red-bright)">console.firebase.google.com</a> → create a free project (any name)</span></div>
-        <div class="setup-step"><span class="setup-num">2</span><span>In your project: click <b style="color:var(--text)">Build</b> → <b style="color:var(--text)">Realtime Database</b> → <b style="color:var(--text)">Create Database</b></span></div>
-        <div class="setup-step"><span class="setup-num">3</span><span>Choose <b style="color:#ffcc44">Start in test mode</b> → Done</span></div>
-        <div class="setup-step"><span class="setup-num">4</span><span>Copy the URL shown at the top (looks like <code style="color:#aaccff;font-size:.75rem">https://xxx-default-rtdb.firebaseio.com</code>)</span></div>
-        <div class="setup-step"><span class="setup-num">5</span><span>Paste it below:</span></div>
-
-        <input type="text" id="db-inp" placeholder="https://your-project-default-rtdb.firebaseio.com" style="font-size:.78rem;letter-spacing:1px;margin-top:6px">
-        <button class="btn" onclick="saveDB()" style="margin-top:4px">▶ TEST & LAUNCH QUIZ</button>
-        <div id="setup-msg" style="font-size:.7rem;letter-spacing:2px;margin-top:12px;line-height:1.8;display:none"></div>
-        <div class="divider"></div>
-        <div style="font-size:.6rem;color:var(--dim);letter-spacing:2px;line-height:2;text-align:center">
-          Firebase free tier · no credit card · 100k reads/day<br>
-          This replaces PeerJS which fails on school/mobile networks
-        </div>
-      </div>
-    </div>`;
-}
-
-window.saveDB = async function() {
-  const inp = document.getElementById('db-inp');
-  const msg = document.getElementById('setup-msg');
-  let url = (inp.value || '').trim().replace(/\/$/, '');
-
-  if (!url.includes('firebaseio.com') && !url.includes('firebasedatabase.app')) {
-    msg.style.color = '#ff5555';
-    msg.textContent = '⚠ Invalid URL. Must contain firebaseio.com or firebasedatabase.app';
-    msg.style.display = 'block';
-    return;
-  }
-
-  msg.style.color = 'var(--dim)';
-  msg.textContent = '▸ Testing connection…';
-  msg.style.display = 'block';
-
-  DB = url;
-  try {
-    const r = await fetch(`${DB}/_quiz_test_.json`, {
-      method: 'PUT',
-      headers: {'Content-Type': 'application/json'},
-      body: '"ok"'
-    });
-    if (!r.ok) throw new Error('HTTP ' + r.status + ' — check test mode rules');
-    await fetch(`${DB}/_quiz_test_.json`, {method: 'DELETE'});
-    localStorage.setItem('quiz_db', DB);
-    msg.style.color = '#4caf50';
-    msg.textContent = '✓ Connected! Launching quiz…';
-    setTimeout(runHost, 600);
-  } catch(e) {
-    msg.style.color = '#ff5555';
-    msg.textContent = `⚠ Failed: ${e.message}`;
-    DB = '';
-  }
-};
+const roomParam = new URLSearchParams(location.search).get('room');
+if (roomParam) runPlayer(roomParam.toUpperCase());
+else           runHost();
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  HOST MODE
 // ══════════════════════════════════════════════════════════════════════════════
 function runHost() {
   const roomCode = Math.random().toString(36).substr(2,6).toUpperCase();
-  const joinUrl  = `${location.origin}${location.pathname}?room=${roomCode}&db=${encodeURIComponent(DB)}`;
+  const joinUrl  = `${location.origin}${location.pathname}?room=${roomCode}`;
+  let qrDone = false;
 
-  let phaseIdx = 0;
-  let phase    = 'lobby';
-  let step     = 0;
-  let snapshot = {};
-  let qrDone   = false;
+  let phaseIdx = 0, phase = 'lobby', step = 0;
 
-  (async () => {
-    await fbDel(`rooms/${roomCode}`);
-    await fbSet(`rooms/${roomCode}/state`, {phase, step, ts: Date.now(), results: null});
-    renderHostFull();
-    setInterval(async () => {
-      const d = await fbGet(`rooms/${roomCode}`);
-      if (d) { snapshot = d; renderHostFull(); }
-    }, 1500);
-  })();
+  // Local state — no race conditions, host is single source of truth
+  const players  = {};          // name → true
+  const votes    = {};          // step → {name: 'yes'|'no'}
+  const answers  = {};          // step → {name: 'A'|'B'|'C'|'D'}
+  const scores   = {};          // name → score
 
-  window.hostNext = async function() {
+  // Subscribe to player messages
+  ntfySubscribe(playerTopic(roomCode), handlePlayerMsg);
+
+  // Re-broadcast current state every 8s so late joiners catch up
+  setInterval(() => broadcastState(), 8000);
+
+  function broadcastState(results = null) {
+    ntfyPublish(hostTopic(roomCode), {
+      type: 'state', phase, step,
+      playerCount: Object.keys(players).length,
+      results
+    });
+  }
+
+  function handlePlayerMsg(msg) {
+    if (msg.type === 'join') {
+      players[msg.name] = true;
+      if (!scores[msg.name]) scores[msg.name] = 0;
+      broadcastState();
+      renderHostFull();
+      return;
+    }
+    if (msg.type === 'vote') {
+      if (phase !== `poll_${msg.step}`) return;
+      votes[msg.step] = votes[msg.step] || {};
+      if (votes[msg.step][msg.name]) return; // already voted
+      votes[msg.step][msg.name] = msg.value;
+      renderHostFull();
+      return;
+    }
+    if (msg.type === 'answer') {
+      if (phase !== `quiz_${msg.step}`) return;
+      answers[msg.step] = answers[msg.step] || {};
+      if (answers[msg.step][msg.name]) return; // already answered
+      answers[msg.step][msg.name] = msg.value;
+      if (msg.value === QUIZ[msg.step - 1].correct) scores[msg.name] = (scores[msg.name] || 0) + 1;
+      renderHostFull();
+    }
+  }
+
+  window.hostNext = function() {
     if (phaseIdx >= PHASES.length - 1) return;
     phaseIdx++;
     phase = PHASES[phaseIdx];
     const m = phase.match(/_(\d+)$/);
     step = m ? parseInt(m[1]) : 0;
 
-    // Get fresh player data before computing results
-    const freshData  = await fbGet(`rooms/${roomCode}`);
-    if (freshData) snapshot = freshData;
-    const players    = snapshot.players || {};
-    const pList      = Object.values(players);
-    const pCount     = pList.length;
-    let results      = null;
+    let results = null;
 
-    if (phase.includes('poll_results')) {
+    if (!phase.includes('results') && phase !== 'lobby' && phase !== 'leaderboard') {
+      // fresh question — nothing to compute
+    }
+    else if (phase.includes('poll_results')) {
+      const vv  = votes[step] || {};
       let yes = 0, no = 0;
-      pList.forEach(p => {
-        const v = (p.votes || {})[step];
-        if (v === 'yes') yes++;
-        else if (v === 'no') no++;
-      });
-      results = {yes, no, playerCount: pCount};
+      Object.values(vv).forEach(v => v === 'yes' ? yes++ : no++);
+      const tot = Math.max(1, yes + no);
+      results = {yes, no, yesPct: Math.round(yes/tot*100), noPct: Math.round(no/tot*100)};
     }
-
     else if (phase.includes('quiz_results')) {
-      const q = QUIZ[step - 1];
+      const aa = answers[step] || {};
       const counts = {A:0, B:0, C:0, D:0};
-      for (const [name, p] of Object.entries(players)) {
-        const a = (p.answers || {})[step];
-        if (a && counts[a] !== undefined) counts[a]++;
-        if (a === q.correct) {
-          await fbSet(`rooms/${roomCode}/players/${name}/score`, (p.score || 0) + 1);
-        }
-      }
-      results = {...counts, playerCount: pCount};
+      Object.values(aa).forEach(a => { if (a in counts) counts[a]++; });
+      results = {...counts};
     }
-
     else if (phase === 'leaderboard') {
-      const freshPlayers = (await fbGet(`rooms/${roomCode}/players`)) || {};
-      const lb = Object.entries(freshPlayers)
-        .map(([n, p]) => ({name: n, score: p.score || 0}))
-        .sort((a, b) => b.score - a.score);
-      results = {leaderboard: lb};
+      results = {
+        leaderboard: Object.entries(scores)
+          .map(([n,s]) => ({name:n, score:s}))
+          .sort((a,b) => b.score - a.score)
+      };
     }
 
-    await fbSet(`rooms/${roomCode}/state`, {phase, step, ts: Date.now(), results});
+    ntfyPublish(hostTopic(roomCode), {type:'state', phase, step, playerCount: Object.keys(players).length, results});
+    renderHostFull();
   };
 
-  function players()  { return snapshot.players || {}; }
-  function pNames()   { return Object.keys(players()); }
-  function pCount()   { return pNames().length; }
-  function stateRes() { return (snapshot.state || {}).results || {}; }
+  function pNames()  { return Object.keys(players); }
+  function pCount()  { return pNames().length; }
 
   function renderHostFull() {
-    let mainHtml = '';
-    let sideHtml = '';
+    const fills = {A:'fill-a',B:'fill-b',C:'fill-c',D:'fill-d'};
+    let mainHtml = '', sideHtml = '';
 
     if (phase === 'lobby') {
       mainHtml = `
-        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;width:100%;">
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;width:100%">
           <div class="tag" style="margin-bottom:6px">▣ SCAN TO JOIN</div>
           <div style="font-family:var(--title);font-size:3.5rem;letter-spacing:.25em;color:var(--red-bright);line-height:1;margin-bottom:18px">${roomCode}</div>
           <div class="qr-box" id="host-qr" style="margin:0 auto"></div>
-          <div style="font-size:.68rem;color:rgba(200,120,80,.55);letter-spacing:1px;margin-top:14px;max-width:480px;word-break:break-all">${joinUrl}</div>
+          <div style="font-size:.68rem;color:rgba(200,120,80,.55);letter-spacing:1px;margin-top:14px;max-width:380px;word-break:break-all">${joinUrl}</div>
           <div style="margin-top:20px;font-size:.68rem;color:var(--dim);letter-spacing:3px;line-height:2.2">
             STUDENTS: scan the QR &nbsp;·&nbsp; enter a codename &nbsp;·&nbsp; wait for host
           </div>
         </div>`;
       sideHtml = `
         <div class="tag">CONNECTED — ${pCount()}</div>
-        ${pNames().map(p => `<div class="player-pill">▸ ${p}</div>`).join('') || '<div style="color:var(--dim);font-size:.65rem;letter-spacing:2px">No players yet…</div>'}`;
+        ${pNames().map(p=>`<div class="player-pill">▸ ${p}</div>`).join('') || '<div style="color:var(--dim);font-size:.65rem;letter-spacing:2px">No players yet…</div>'}`;
     }
 
     else if (phase.startsWith('poll_') && !phase.includes('results')) {
-      const p = POLLS[step - 1];
-      let yes = 0, no = 0;
-      Object.values(players()).forEach(pl => {
-        const v = (pl.votes || {})[step];
-        if (v === 'yes') yes++;
-        else if (v === 'no') no++;
-      });
-      const voted = yes + no;
+      const p = POLLS[step-1];
+      const vv = votes[step] || {};
+      let yes=0, no=0;
+      Object.values(vv).forEach(v => v==='yes'?yes++:no++);
       mainHtml = `
         <div class="topic-badge">POLL ${step} / 6</div>
         <h2>${p.topic.toUpperCase()}</h2>
         <div class="divider"></div>
         <div class="q-text">${p.question}</div>
         <div class="divider"></div>
-        <div class="live-big">${voted} / ${pCount()}</div>
+        <div class="live-big">${yes+no} / ${pCount()}</div>
         <div style="font-size:.65rem;letter-spacing:3px;color:var(--dim);margin-top:4px">VOTES CAST</div>`;
       sideHtml = `
         <div class="tag">LIVE VOTES</div>
@@ -374,11 +329,12 @@ function runHost() {
     }
 
     else if (phase.includes('poll_results')) {
-      const p   = POLLS[step - 1];
-      const res = stateRes();
-      const tot = Math.max(1, (res.yes || 0) + (res.no || 0));
-      const yp  = Math.round((res.yes || 0) / tot * 100);
-      const np  = Math.round((res.no  || 0) / tot * 100);
+      const p  = POLLS[step-1];
+      const vv = votes[step] || {};
+      let yes=0, no=0;
+      Object.values(vv).forEach(v => v==='yes'?yes++:no++);
+      const tot=Math.max(1,yes+no);
+      const yp=Math.round(yes/tot*100), np=Math.round(no/tot*100);
       mainHtml = `
         <div class="topic-badge">POLL ${step} RESULTS</div>
         <h2>${p.topic.toUpperCase()}</h2>
@@ -397,13 +353,10 @@ function runHost() {
     }
 
     else if (phase.startsWith('quiz_') && !phase.includes('results')) {
-      const q = QUIZ[step - 1];
-      let answered = 0;
-      const counts = {A:0, B:0, C:0, D:0};
-      Object.values(players()).forEach(pl => {
-        const a = (pl.answers || {})[step];
-        if (a && counts[a] !== undefined) { counts[a]++; answered++; }
-      });
+      const q = QUIZ[step-1];
+      const aa = answers[step] || {};
+      const cnt = {A:0,B:0,C:0,D:0};
+      Object.values(aa).forEach(a => { if (a in cnt) cnt[a]++; });
       mainHtml = `
         <div class="topic-badge">QUESTION ${step} / 6 · ${q.topic.toUpperCase()}</div>
         <h2>QUESTION ${step}</h2>
@@ -411,56 +364,51 @@ function runHost() {
         <div class="q-text">${q.question}</div>
         ${['A','B','C','D'].map(k=>`<div class="opt-row"><span class="opt-key">${k}</span>${q.options[k]}</div>`).join('')}
         <div class="divider"></div>
-        <div class="live-big">${answered} / ${pCount()}</div>
+        <div class="live-big">${Object.keys(aa).length} / ${pCount()}</div>
         <div style="font-size:.65rem;letter-spacing:3px;color:var(--dim);margin-top:4px">ANSWERS IN</div>`;
       sideHtml = `
         <div class="tag">LIVE ANSWERS</div>
-        ${['A','B','C','D'].map(k=>`<div style="font-size:1.1rem;font-family:var(--title);color:var(--paper);margin:5px 0">${k}: ${counts[k]}</div>`).join('')}`;
+        ${['A','B','C','D'].map(k=>`<div style="font-size:1.1rem;font-family:var(--title);color:var(--paper);margin:5px 0">${k}: ${cnt[k]}</div>`).join('')}`;
     }
 
     else if (phase.includes('quiz_results')) {
-      const q    = QUIZ[step - 1];
-      const res  = stateRes();
-      const tot  = Math.max(1, pCount());
-      const fills = {A:'fill-a', B:'fill-b', C:'fill-c', D:'fill-d'};
+      const q = QUIZ[step-1];
+      const aa = answers[step] || {};
+      const cnt = {A:0,B:0,C:0,D:0};
+      Object.values(aa).forEach(a => { if (a in cnt) cnt[a]++; });
+      const tot = Math.max(1, pCount());
       mainHtml = `
         <div class="topic-badge">QUESTION ${step} RESULTS · CORRECT: ${q.correct}</div>
         <h2>${q.topic.toUpperCase()}</h2>
         <div class="divider"></div>
         <div class="q-text">${q.question}</div>
-        ${['A','B','C','D'].map(k => {
-          const cnt = res[k] || 0;
-          const pct = Math.round(cnt / tot * 100);
-          const isC = k === q.correct;
+        ${['A','B','C','D'].map(k=>{
+          const c=cnt[k], pct=Math.round(c/tot*100), isC=k===q.correct;
           return `<div class="hbar-row">
-            <div class="hbar-lbl"><span style="${isC?'color:#4caf50':''}">${k}. ${q.options[k]}${isC?' ✓':''}</span><span>${cnt} (${pct}%)</span></div>
+            <div class="hbar-lbl"><span style="${isC?'color:#4caf50':''}">${k}. ${q.options[k]}${isC?' ✓':''}</span><span>${c} (${pct}%)</span></div>
             <div class="bar-track"><div class="bar-fill ${fills[k]}" style="width:${pct}%"></div></div>
           </div>`;
         }).join('')}
         <div class="explanation">${q.explanation}</div>`;
       sideHtml = `
         <div class="tag">STATS</div>
-        ${['A','B','C','D'].map(k => {
-          const cnt = res[k] || 0;
-          const pct = Math.round(cnt / tot * 100);
-          const isC = k === q.correct;
-          return `<div style="font-size:1rem;font-family:var(--title);color:${isC?'#4caf50':'var(--paper)'};margin:5px 0">${k}: ${cnt} (${pct}%)${isC?' ✓':''}</div>`;
+        ${['A','B','C','D'].map(k=>{
+          const c=cnt[k], pct=Math.round(c/tot*100), isC=k===q.correct;
+          return `<div style="font-size:1rem;font-family:var(--title);color:${isC?'#4caf50':'var(--paper)'};margin:5px 0">${k}: ${c} (${pct}%)${isC?' ✓':''}</div>`;
         }).join('')}`;
     }
 
     else if (phase === 'leaderboard') {
-      const lb = (stateRes().leaderboard) ||
-        Object.entries(players()).map(([n,p])=>({name:n,score:p.score||0})).sort((a,b)=>b.score-a.score);
+      const lb = Object.entries(scores).map(([n,s])=>({name:n,score:s})).sort((a,b)=>b.score-a.score);
       mainHtml = `
         <div class="tag">▣ FINAL DECLASSIFICATION</div>
         <h2>LEADERBOARD</h2>
         <div class="divider"></div>
         ${lb.map((p,i)=>{
-          const medal = i===0?'🥇':i===1?'🥈':i===2?'🥉':`${i+1}.`;
+          const medal=i===0?'🥇':i===1?'🥈':i===2?'🥉':`${i+1}.`;
           return `<div class="lb-row"><span class="lb-rank">${medal}</span><span class="lb-name">${p.name}</span><span class="lb-score">${p.score}/6</span></div>`;
         }).join('') || '<div style="color:var(--dim)">No players</div>'}`;
-      sideHtml = `<div class="tag">FINAL SCORES</div>
-        ${(stateRes().leaderboard || []).map(p=>`<div class="player-pill">${p.name}: ${p.score}/6</div>`).join('')}`;
+      sideHtml = `<div class="tag">FINAL SCORES</div>${lb.map(p=>`<div class="player-pill">${p.name}: ${p.score}/6</div>`).join('')}`;
     }
 
     document.getElementById('app').innerHTML = `
@@ -480,7 +428,7 @@ function runHost() {
     if (phase === 'lobby' && !qrDone) {
       const el = document.getElementById('host-qr');
       if (el && typeof QRCode !== 'undefined') {
-        new QRCode(el, {text: joinUrl, width:380, height:380, colorDark:'#000000', colorLight:'#ffffff'});
+        new QRCode(el, {text:joinUrl, width:380, height:380, colorDark:'#000000', colorLight:'#ffffff'});
         qrDone = true;
       }
     }
@@ -494,6 +442,8 @@ function runHost() {
       <div class="bar-track"><div class="bar-fill ${fillClass}" style="width:${pct}%">${pct>8?pct+'%':''}</div></div>
     </div>`;
   }
+
+  renderHostFull();
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -502,11 +452,10 @@ function runHost() {
 function runPlayer(roomCode) {
   let myName       = localStorage.getItem('quiz_name') || '';
   let currentState = null;
-  let myVotes      = {};   // step → 'yes'|'no'
-  let myAnswers    = {};   // step → 'A'|'B'|'C'|'D'
+  let myVotes      = {};
+  let myAnswers    = {};
   let myScore      = 0;
   let scoredSteps  = new Set();
-  let pollInterval = null;
 
   document.getElementById('score-badge').style.display = 'block';
 
@@ -527,37 +476,33 @@ function runPlayer(roomCode) {
       </div>`;
   }
 
-  window.joinAs = async function() {
-    const n = (document.getElementById('ni') || {}).value;
-    if (!n || !n.trim()) return;
-    myName = n.trim().replace(/[.#$\[\]/]/g, '_');
+  window.joinAs = function() {
+    const n = (document.getElementById('ni')||{}).value;
+    if (!n||!n.trim()) return;
+    myName = n.trim().replace(/[.#$\[\]/]/g,'_');
     localStorage.setItem('quiz_name', myName);
-    await joinRoom();
+    joinRoom();
   };
 
-  async function joinRoom() {
+  function joinRoom() {
     setMsg('Connecting…');
 
-    // Verify room exists
-    const state = await fbGet(`rooms/${roomCode}/state`);
-    if (!state) {
-      setMsg(`Room not found.<br><span style="color:var(--dim);font-size:.8rem">Ask the host to open the quiz, then <button class="btn" onclick="location.reload()" style="display:inline;width:auto;padding:4px 12px;font-size:.7rem;margin:0 4px">retry</button></span>`);
-      return;
-    }
-
-    // Register player
-    await fbSet(`rooms/${roomCode}/players/${myName}`, {score: 0, joinedAt: Date.now()});
-
-    currentState = state;
-    renderPlayer(state);
-
-    pollInterval = setInterval(async () => {
-      const s = await fbGet(`rooms/${roomCode}/state`);
-      if (s && JSON.stringify(s) !== JSON.stringify(currentState)) {
-        currentState = s;
-        renderPlayer(s);
+    // Subscribe to host state messages
+    ntfySubscribe(hostTopic(roomCode), data => {
+      if (data.type === 'state') {
+        currentState = data;
+        renderPlayer(data);
       }
-    }, 2000);
+    });
+
+    // Fetch most recent state in case host already started
+    ntfyPollLatest(hostTopic(roomCode)).then(state => {
+      if (state && !currentState) { currentState = state; renderPlayer(state); }
+      else if (!state && !currentState) setMsg('Connected. Waiting for host to start…');
+    });
+
+    // Register with host
+    ntfyPublish(playerTopic(roomCode), {type:'join', name:myName});
   }
 
   function setMsg(msg) {
@@ -567,25 +512,27 @@ function runPlayer(roomCode) {
           <div class="tag">▣ ROOM ${roomCode}</div>
           <h1 style="font-size:1.4rem;margin-bottom:14px">ARCHIVES</h1>
           <div class="divider"></div>
-          <div style="font-size:.75rem;letter-spacing:2px;color:var(--dim);line-height:2.2">${msg}</div>
+          <div style="font-size:.75rem;letter-spacing:2px;color:var(--dim);line-height:2.4">${msg}</div>
           <div class="waiting-anim" style="margin-top:24px">▸ ▸ ▸</div>
         </div>
       </div>`;
   }
 
-  window.playerVote = async function(v) {
+  window.playerVote = function(v) {
     if (!currentState) return;
     const s = currentState.step;
+    if (myVotes[s]) return;
     myVotes[s] = v;
-    await fbSet(`rooms/${roomCode}/players/${myName}/votes/${s}`, v);
+    ntfyPublish(playerTopic(roomCode), {type:'vote', name:myName, step:s, value:v});
     renderPlayer(currentState);
   };
 
-  window.playerAnswer = async function(a) {
+  window.playerAnswer = function(a) {
     if (!currentState) return;
     const s = currentState.step;
+    if (myAnswers[s]) return;
     myAnswers[s] = a;
-    await fbSet(`rooms/${roomCode}/players/${myName}/answers/${s}`, a);
+    ntfyPublish(playerTopic(roomCode), {type:'answer', name:myName, step:s, value:a});
     renderPlayer(currentState);
   };
 
@@ -604,32 +551,29 @@ function runPlayer(roomCode) {
         <h1>ACCESS GRANTED</h1>
         <div class="divider"></div>
         <div style="font-size:.8rem;color:var(--dim);letter-spacing:2px;line-height:2.4;text-align:center">
-          AGENT: ${myName}<br>ROOM: ${roomCode}<br><br>AWAITING HOST COMMAND…
+          AGENT: ${myName}<br>ROOM: ${roomCode}<br>
+          PLAYERS: ${s.playerCount||1}<br><br>AWAITING HOST COMMAND…
         </div>
         <div class="waiting-anim">▸ ▸ ▸</div>`);
     }
 
     else if (ph.startsWith('poll_') && !ph.includes('results')) {
-      const p = POLLS[step - 1];
-      if (myVotes[step]) {
-        html = waitingBox('VOTE RECORDED', 'Waiting for all votes…');
-      } else {
-        html = wrap(`
-          <div class="tag">▣ POLL ${step} / 6 · ${p.topic.toUpperCase()}</div>
-          <div class="divider"></div>
-          <div class="q-text">${p.question}</div>
-          <div class="vote-row">
-            <button class="btn btn-green" onclick="playerVote('yes')">✓ YES</button>
-            <button class="btn btn-red-dark" onclick="playerVote('no')">✗ NO</button>
-          </div>`);
-      }
+      const p = POLLS[step-1];
+      html = myVotes[step]
+        ? waitingBox('VOTE RECORDED', 'Waiting for all votes…')
+        : wrap(`
+            <div class="tag">▣ POLL ${step} / 6 · ${p.topic.toUpperCase()}</div>
+            <div class="divider"></div>
+            <div class="q-text">${p.question}</div>
+            <div class="vote-row">
+              <button class="btn btn-green" onclick="playerVote('yes')">✓ YES</button>
+              <button class="btn btn-red-dark" onclick="playerVote('no')">✗ NO</button>
+            </div>`);
     }
 
     else if (ph.includes('poll_results')) {
-      const p   = POLLS[step - 1];
-      const tot = Math.max(1, (res.yes || 0) + (res.no || 0));
-      const yp  = Math.round((res.yes || 0) / tot * 100);
-      const np  = Math.round((res.no  || 0) / tot * 100);
+      const p  = POLLS[step-1];
+      const yp = res.yesPct || 0, np = res.noPct || 0;
       html = wrap(`
         <div class="tag">▣ POLL ${step} RESULTS</div>
         <h2>${p.topic.toUpperCase()}</h2>
@@ -642,70 +586,59 @@ function runPlayer(roomCode) {
     }
 
     else if (ph.startsWith('quiz_') && !ph.includes('results')) {
-      const q = QUIZ[step - 1];
-      if (myAnswers[step]) {
-        html = waitingBox('ANSWER LOCKED IN', 'Waiting for all players…');
-      } else {
-        const opts = ['A','B','C','D'].map(k =>
-          `<button class="ans-btn" onclick="playerAnswer('${k}')"><span class="ans-key">${k}</span><span>${q.options[k]}</span></button>`
-        ).join('');
-        html = wrap(`
-          <div class="tag">▣ QUESTION ${step} / 6 · ${q.topic.toUpperCase()}</div>
-          <div class="divider"></div>
-          <div class="q-text">${q.question}</div>
-          ${opts}`);
-      }
+      const q = QUIZ[step-1];
+      html = myAnswers[step]
+        ? waitingBox('ANSWER LOCKED IN', 'Waiting for all players…')
+        : wrap(`
+            <div class="tag">▣ QUESTION ${step} / 6 · ${q.topic.toUpperCase()}</div>
+            <div class="divider"></div>
+            <div class="q-text">${q.question}</div>
+            ${['A','B','C','D'].map(k=>
+              `<button class="ans-btn" onclick="playerAnswer('${k}')"><span class="ans-key">${k}</span><span>${q.options[k]}</span></button>`
+            ).join('')}`);
     }
 
     else if (ph.includes('quiz_results')) {
-      const q      = QUIZ[step - 1];
+      const q      = QUIZ[step-1];
       const myAns  = myAnswers[step] || '';
       const wasOk  = myAns === q.correct;
       if (wasOk && !scoredSteps.has(step)) { myScore++; scoredSteps.add(step); if (sc) sc.textContent = myScore; }
       const ops = ['A','B','C','D'].map(k => {
-        let cls = '';
-        if (k === q.correct)                    cls = 'correct';
-        else if (k === myAns && k !== q.correct) cls = 'selected-wrong';
+        let cls = k===q.correct ? 'correct' : (k===myAns&&k!==q.correct ? 'selected-wrong' : '');
         return `<button class="ans-btn ${cls}" disabled><span class="ans-key">${k}</span><span>${q.options[k]}</span></button>`;
       }).join('');
-      const msg = myAns
-        ? (wasOk ? `<div class="result-ok">✓ CORRECT — +1 POINT</div>` : `<div class="result-no">✗ WRONG</div>`)
-        : `<div class="result-no">— DID NOT ANSWER</div>`;
       html = wrap(`
         <div class="tag">▣ QUESTION ${step} RESULTS</div>
         <h2>${q.topic.toUpperCase()}</h2>
         <div class="divider"></div>
         ${ops}
-        ${msg}
+        ${myAns ? (wasOk ? `<div class="result-ok">✓ CORRECT — +1 POINT</div>` : `<div class="result-no">✗ WRONG</div>`) : `<div class="result-no">— DID NOT ANSWER</div>`}
         <div class="explanation">${q.explanation}</div>`);
     }
 
     else if (ph === 'leaderboard') {
       const lb     = res.leaderboard || [];
-      const myRank = lb.findIndex(p => p.name === myName) + 1;
-      const me     = lb.find(p => p.name === myName);
+      const me     = lb.find(p=>p.name===myName);
+      const myRank = lb.findIndex(p=>p.name===myName) + 1;
       if (sc) sc.textContent = me ? me.score : myScore;
-      const rows = lb.map((p, i) => {
-        const medal = i===0?'🥇':i===1?'🥈':i===2?'🥉':`${i+1}.`;
-        return `<div class="lb-row ${p.name===myName?'me':''}">
-          <span class="lb-rank">${medal}</span>
-          <span class="lb-name">${p.name}</span>
-          <span class="lb-score">${p.score}/6</span>
-        </div>`;
-      }).join('');
       html = wrap(`
         <div class="tag">▣ FINAL LEADERBOARD</div>
         <h1>DECLASSIFIED</h1>
         <div class="divider"></div>
-        ${rows || '<div style="color:var(--dim)">No results yet</div>'}
+        ${lb.map((p,i)=>{
+          const medal=i===0?'🥇':i===1?'🥈':i===2?'🥉':`${i+1}.`;
+          return `<div class="lb-row ${p.name===myName?'me':''}">
+            <span class="lb-rank">${medal}</span>
+            <span class="lb-name">${p.name}</span>
+            <span class="lb-score">${p.score}/6</span>
+          </div>`;
+        }).join('')||'<div style="color:var(--dim)">No results yet</div>'}
         <div style="margin-top:18px;text-align:center;font-size:.7rem;letter-spacing:3px;color:var(--dim)">
-          YOUR RANK: ${myRank||'—'} / ${lb.length} &nbsp;·&nbsp; SCORE: ${me?me.score:myScore}/6
+          RANK: ${myRank||'—'} / ${lb.length} &nbsp;·&nbsp; SCORE: ${me?me.score:myScore}/6
         </div>`);
     }
 
-    else {
-      html = wrap(`<div class="waiting-anim">▸ ▸ ▸</div>`);
-    }
+    else { html = wrap(`<div class="waiting-anim">▸ ▸ ▸</div>`); }
 
     document.getElementById('app').innerHTML = `
       <div style="display:flex;flex-direction:column;align-items:center;justify-content:flex-start;min-height:100vh;padding:20px 16px 40px">
@@ -713,15 +646,9 @@ function runPlayer(roomCode) {
       </div>`;
   }
 
-  function wrap(content) {
-    return `<div class="card" style="margin-top:16px">${content}</div>`;
-  }
-  function waitingBox(title, subtitle) {
-    return wrap(`
-      <div class="tag">▣ ${title}</div>
-      <div class="divider"></div>
-      <div class="answered-box">${subtitle}</div>
-      <div class="waiting-anim">▸ ▸ ▸</div>`);
+  function wrap(c) { return `<div class="card" style="margin-top:16px">${c}</div>`; }
+  function waitingBox(title, sub) {
+    return wrap(`<div class="tag">▣ ${title}</div><div class="divider"></div><div class="answered-box">${sub}</div><div class="waiting-anim">▸ ▸ ▸</div>`);
   }
   function pBar(label, pct, fillClass, blue=false) {
     const col = blue ? '#3a8acc' : 'var(--paper)';
